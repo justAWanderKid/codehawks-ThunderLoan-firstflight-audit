@@ -93,6 +93,8 @@ contract ThunderLoanUpgraded is Initializable, OwnableUpgradeable, UUPSUpgradeab
     mapping(IERC20 => AssetToken) public s_tokenToAssetToken;
 
     // The fee in WEI, it should have 18 decimals. Each flash loan takes a flat fee of the token price.
+    
+    // [HIGH] @audit Storage Collision between `ThunderLoan.sol` and `ThunderLoanUpgraded.sol`.
     uint256 private s_flashLoanFee; // 0.3% ETH fee
     uint256 public constant FEE_PRECISION = 1e18;
 

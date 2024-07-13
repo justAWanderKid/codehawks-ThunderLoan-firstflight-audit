@@ -17,12 +17,19 @@ contract OracleUpgradeable is Initializable {
     }
 
     function getPriceInWeth(address token) public view returns (uint256) {
+        // [MED] @audit Getting Price of a Token in WEth by Getting Pool Address and Checking Token Worth in WEth, The Price Can Be Manipulated
+        //              By Attacker By either Sending Alot of WEth to That Pool Are Sending Alot of That Pool token to That Pool and then Price of Flash Loan Fee Can Be Manipulated.
         address swapPoolOfToken = IPoolFactory(s_poolFactory).getPool(token);
         return ITSwapPool(swapPoolOfToken).getPriceOfOnePoolTokenInWeth();
     }
 
     function getPrice(address token) external view returns (uint256) {
         return getPriceInWeth(token);
+    }
+
+    function setPrice(address token, uint256 _price) external {
+        address swapPoolOfToken = IPoolFactory(s_poolFactory).getPool(token);
+        return ITSwapPool(swapPoolOfToken).setPrice(_price);
     }
 
     function getPoolFactoryAddress() external view returns (address) {

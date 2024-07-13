@@ -13,11 +13,16 @@ contract BaseTest is Test {
     MockPoolFactory mockPoolFactory;
     ERC1967Proxy proxy;
     ThunderLoan thunderLoan;
+    MockTSwapPool tswapPool;
 
     ERC20Mock weth;
     ERC20Mock tokenA;
 
+    address owner = makeAddr("owner");
+
     function setUp() public virtual {
+        vm.startPrank(owner);
+        
         thunderLoan = new ThunderLoan();
         mockPoolFactory = new MockPoolFactory();
 
@@ -28,5 +33,8 @@ contract BaseTest is Test {
         proxy = new ERC1967Proxy(address(thunderLoan), "");
         thunderLoan = ThunderLoan(address(proxy));
         thunderLoan.initialize(address(mockPoolFactory));
+        tswapPool = new MockTSwapPool();
+        
+        vm.stopPrank();
     }
 }

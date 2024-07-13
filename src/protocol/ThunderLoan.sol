@@ -93,8 +93,10 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
     mapping(IERC20 => AssetToken) public s_tokenToAssetToken;
 
     // The fee in WEI, it should have 18 decimals. Each flash loan takes a flat fee of the token price.
+
+    // [INFO] @audit `s_feePrecision` should be constant because it's value it's never changed in `ThunderLoan.sol`.
     uint256 private s_feePrecision;
-    uint256 private s_flashLoanFee; // 0.3% ETH fee
+    uint256 private s_flashLoanFee; // 0.3% ETH fee 
 
     mapping(IERC20 token => bool currentlyFlashLoaning) private s_currentlyFlashLoaning;
 
@@ -136,6 +138,7 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
     /*//////////////////////////////////////////////////////////////
                            EXTERNAL FUNCTIONS
     //////////////////////////////////////////////////////////////*/
+    // [LOW] @audit initialize function is Vulnerable to front running bots.
     function initialize(address tswapAddress) external initializer {
         __Ownable_init();
         __UUPSUpgradeable_init();
@@ -144,20 +147,35 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
         s_flashLoanFee = 3e15; // 0.3% ETH fee
     }
 
+
     function deposit(IERC20 token, uint256 amount) external revertIfZero(amount) revertIfNotAllowedToken(token) {
         AssetToken assetToken = s_tokenToAssetToken[token];
         uint256 exchangeRate = assetToken.getExchangeRate();
+        // [LOW] @audit Starting `exchangeRate` Should be Equal to 2e18, Because in `AssetToken.sol` is Stated that Each AssetToken is Equal to 2 Underlying Token. This Results in Incorrect Mint Amount Calculation.
         uint256 mintAmount = (amount * assetToken.EXCHANGE_RATE_PRECISION()) / exchangeRate;
         emit Deposit(msg.sender, token, amount);
         assetToken.mint(msg.sender, mintAmount);
+
         uint256 calculatedFee = getCalculatedFee(token, amount);
+        // [HIGH] @audit By Updating Exchange Rate in Deposit Function it Can Result in Attacker Depositing And Redeeming Over and Over Until the All Underlying Tokens are Drained.
         assetToken.updateExchangeRate(calculatedFee);
         token.safeTransferFrom(msg.sender, address(assetToken), amount);
     }
 
-    /// @notice Withdraws the underlying token from the asset token
-    /// @param token The token they want to withdraw from
-    /// @param amountOfAssetToken The amount of the underlying they want to withdraw
+
+
+
+
+    function getCalculatedFee(IERC20 token, uint256 amount) public view returns (uint256 fee) {
+        // [HIGH] @audit Very Low Fee For Non Standard ERC20 Tokens with 9 decimals like USDT and USDC
+        uint256 valueOfBorrowedToken = (amount * getPriceInWeth(address(token))) / s_feePrecision;
+        fee = (valueOfBorrowedToken * s_flashLoanFee) / s_feePrecision;
+    }
+
+
+
+
+
     function redeem(
         IERC20 token,
         uint256 amountOfAssetToken
@@ -166,16 +184,27 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
         revertIfZero(amountOfAssetToken)
         revertIfNotAllowedToken(token)
     {
+
         AssetToken assetToken = s_tokenToAssetToken[token];
         uint256 exchangeRate = assetToken.getExchangeRate();
         if (amountOfAssetToken == type(uint256).max) {
             amountOfAssetToken = assetToken.balanceOf(msg.sender);
         }
+
+        // currentExchangeRate = 1007524807450945082
+        // EXCHANGE_RATE_PRECISION = 1000000000000000000
+        // FlashLoanDrainer AssetToken balance = 997008973080757726819 995508986560447159713
+        // ThunderLoan Token A Balnace = 1003000000000000000000
         uint256 amountUnderlying = (amountOfAssetToken * exchangeRate) / assetToken.EXCHANGE_RATE_PRECISION();
         emit Redeemed(msg.sender, token, amountOfAssetToken, amountUnderlying);
+
         assetToken.burn(msg.sender, amountOfAssetToken);
+
         assetToken.transferUnderlyingTo(msg.sender, amountUnderlying);
     }
+
+
+
 
     function flashloan(address receiverAddress, IERC20 token, uint256 amount, bytes calldata params) external {
         AssetToken assetToken = s_tokenToAssetToken[token];
@@ -209,12 +238,20 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
             )
         );
 
+        // [HIGH] @audit Attacker Can Take Flash Loans and Use `deposit()` function to pay it back, and in return he will get AssetToken, And then After that he will call `redeem()` function Allowing the Attacker to Drain Protocol All Balance.
         uint256 endingBalance = token.balanceOf(address(assetToken));
         if (endingBalance < startingBalance + fee) {
             revert ThunderLoan__NotPaidBack(startingBalance + fee, endingBalance);
         }
         s_currentlyFlashLoaning[token] = false;
     }
+
+
+
+
+
+
+
 
     function repay(IERC20 token, uint256 amount) public {
         if (!s_currentlyFlashLoaning[token]) {
@@ -224,6 +261,12 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
         token.safeTransferFrom(msg.sender, address(assetToken), amount);
     }
 
+
+
+
+
+
+    // [HIGH] @audit if an Allowed Token is Set to False While Many Liquidity Providers Deposited into this Protocol, it can Result in Liquidity Providers Not be Able to Redeem Tokens.
     function setAllowedToken(IERC20 token, bool allowed) external onlyOwner returns (AssetToken) {
         if (allowed) {
             if (address(s_tokenToAssetToken[token]) != address(0)) {
@@ -231,10 +274,13 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
             }
             string memory name = string.concat("ThunderLoan ", IERC20Metadata(address(token)).name());
             string memory symbol = string.concat("tl", IERC20Metadata(address(token)).symbol());
+
             AssetToken assetToken = new AssetToken(address(this), token, name, symbol);
             s_tokenToAssetToken[token] = assetToken;
+
             emit AllowedTokenSet(token, assetToken, allowed);
             return assetToken;
+
         } else {
             AssetToken assetToken = s_tokenToAssetToken[token];
             delete s_tokenToAssetToken[token];
@@ -243,12 +289,9 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
         }
     }
 
-    function getCalculatedFee(IERC20 token, uint256 amount) public view returns (uint256 fee) {
-        //slither-disable-next-line divide-before-multiply
-        uint256 valueOfBorrowedToken = (amount * getPriceInWeth(address(token))) / s_feePrecision;
-        //slither-disable-next-line divide-before-multiply
-        fee = (valueOfBorrowedToken * s_flashLoanFee) / s_feePrecision;
-    }
+
+
+
 
     function updateFlashLoanFee(uint256 newFee) external onlyOwner {
         if (newFee > s_feePrecision) {
@@ -256,6 +299,9 @@ contract ThunderLoan is Initializable, OwnableUpgradeable, UUPSUpgradeable, Orac
         }
         s_flashLoanFee = newFee;
     }
+
+
+
 
     function isAllowedToken(IERC20 token) public view returns (bool) {
         return address(s_tokenToAssetToken[token]) != address(0);

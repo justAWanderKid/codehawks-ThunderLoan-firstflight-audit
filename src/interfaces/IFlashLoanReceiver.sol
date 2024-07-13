@@ -7,6 +7,8 @@ import { IThunderLoan } from "./IThunderLoan.sol";
  * @dev Inspired by Aave:
  * https://github.com/aave/aave-v3-core/blob/master/contracts/flashloan/interfaces/IFlashLoanReceiver.sol
  */
+
+// @me this is an Interface that Flash Loan Reciever contract should implement
 interface IFlashLoanReceiver {
     function executeOperation(
         address token,
